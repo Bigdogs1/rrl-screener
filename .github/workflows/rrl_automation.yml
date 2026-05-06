@@ -1,0 +1,148 @@
+# ============================================================
+#  GITHUB ACTIONS — COMPLETE WORKFLOW
+#  File location: .github/workflows/rrl_automation.yml
+#
+#  THREE JOBS:
+#  1. morning_screener  — 7:30am Mon-Fri  (daily report email)
+#  2. midday_alert      — 12:30pm Mon-Fri (price check if in trade)
+#  3. weekly_updater    — 8:00am Sunday   (Claude reviews & updates levels)
+# ============================================================
+
+name: RR.L Full Automation
+
+on:
+  schedule:
+    # Job 1: Morning screener — 7:30am BST (06:30 UTC) Mon–Fri
+    - cron: "30 6 * * 1-5"
+
+    # Job 2: Midday alert — 12:30pm BST (11:30 UTC) Mon–Fri
+    - cron: "30 11 * * 1-5"
+
+    # Job 3: Weekly updater — 8:00am BST (07:00 UTC) Sunday
+    - cron: "0 7 * * 0"
+
+  # Manual trigger from GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which job to run manually"
+        required: true
+        default: "morning"
+        type: choice
+        options:
+          - morning
+          - midday
+          - updater
+
+jobs:
+
+  # ──────────────────────────────────────────────
+  #  JOB 1: MORNING SCREENER
+  #  Sends full daily report at 7:30am
+  # ──────────────────────────────────────────────
+  morning_screener:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'schedule' &&
+       (github.event.schedule == '30 6 * * 1-5')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.job == 'morning')
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install yfinance pandas matplotlib numpy gspread google-auth
+
+      - name: Run morning screener
+        env:
+          SENDER_EMAIL:       ${{ secrets.SENDER_EMAIL }}
+          EMAIL_PASSWORD:     ${{ secrets.EMAIL_PASSWORD }}
+          RECEIVER_EMAIL:     ${{ secrets.RECEIVER_EMAIL }}
+          GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
+          SPREADSHEET_ID:     ${{ secrets.SPREADSHEET_ID }}
+        run: python rrl_screener_v2.py
+
+
+  # ──────────────────────────────────────────────
+  #  JOB 2: MIDDAY ALERT
+  #  Checks price at 12:30pm — only acts if IN_TRADE=True
+  # ──────────────────────────────────────────────
+  midday_alert:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'schedule' &&
+       (github.event.schedule == '30 11 * * 1-5')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.job == 'midday')
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install yfinance
+
+      - name: Run midday alert
+        env:
+          SENDER_EMAIL:   ${{ secrets.SENDER_EMAIL }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+        run: python rrl_midday_alert.py
+
+
+  # ──────────────────────────────────────────────
+  #  JOB 3: WEEKLY CLAUDE AUTO-UPDATER
+  #  Every Sunday — Claude reviews and updates levels
+  # ──────────────────────────────────────────────
+  weekly_updater:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'schedule' &&
+       (github.event.schedule == '0 7 * * 0')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.job == 'updater')
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          # Needs write permission to commit changes back
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install yfinance pandas numpy anthropic
+
+      - name: Run Claude auto-updater
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SENDER_EMAIL:      ${{ secrets.SENDER_EMAIL }}
+          EMAIL_PASSWORD:    ${{ secrets.EMAIL_PASSWORD }}
+          RECEIVER_EMAIL:    ${{ secrets.RECEIVER_EMAIL }}
+        run: python claude_auto_updater.py
+
+      # Commit any file changes Claude made back to the repo
+      - name: Commit updated levels to GitHub
+        run: |
+          git config user.name  "RR.L Auto-Updater"
+          git config user.email "actions@github.com"
+          git add rrl_screener_v2.py rrl_midday_alert.py
+          git diff --staged --quiet || git commit -m \
+            "Auto-update: Claude reviewed and updated trade levels $(date +'%Y-%m-%d')"
+          git push
