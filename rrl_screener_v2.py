@@ -47,7 +47,7 @@ print("✅ Libraries loaded")
 # ============================================================
 
 # --- Your account & risk ---
-ACCOUNT_SIZE  = 5000           # Your account in GBP — change this
+ACCOUNT_SIZE  = 500           # Your account in GBP — change this
 RISK_PCT      = 1.5            # % to risk per trade (1–2% recommended)
 
 # --- Trade status ---
